@@ -1,0 +1,71 @@
+# hello-site — minimal fixture site for the dev-server manager (M2, stateful since M3).
+#
+# Single web service: a static index page plus a /health endpoint
+# (200 "ok"), and — since M3 — a stateful counter kept in the named
+# volume "data" (/data/counter): GET /increment bumps it, GET /state
+# returns it. The e2e suite uses this to prove that a reaped dev server
+# (TTL) comes back with its data restored from the snapshot.
+#
+# The service is a pure busybox container running tcpsvd + a small sh
+# router (busybox httpd only executes CGI below /cgi-bin, so a root
+# /increment endpoint needs a real router). The content is baked in via
+# the container command, so the stack needs no host bind mounts and
+# publishes no ports: preview is only reachable through the platform
+# reverse-proxy on the shared docker network (docs/ARCHITECTURE.md §3).
+services:
+  web:
+    image: busybox:1.36
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /www
+        cat > /www/router.sh <<'EOF'
+        #!/bin/sh
+        # Minimal HTTP router for the fixture site. tcpsvd runs one
+        # instance per connection with stdin/stdout on the socket.
+        IFS=" " read -r method path version
+        while IFS= read -r line; do
+          [ "$$line" = "$$(printf '\r')" ] && break
+        done
+        path=$${path%%\?*}
+        status=200; reason="OK"; ctype="text/plain"; body=""
+        case "$$path" in
+          /|"")
+            ctype="text/html"
+            body="<!doctype html><html><head><title>hello-site</title></head><body><h1>hello from the dev site</h1></body></html>"
+            ;;
+          /health) body="ok" ;;
+          /increment)
+            n=$$(cat /data/counter 2>/dev/null || echo 0)
+            n=$$((n + 1))
+            echo "$$n" > /data/counter
+            body="$$n"
+            ;;
+          /state)
+            body=$$(cat /data/counter 2>/dev/null || echo 0)
+            ;;
+          *)
+            status=404; reason="Not Found"; body="not found"
+            ;;
+        esac
+        len=$$(printf %s "$$body" | wc -c)
+        printf "HTTP/1.0 %s %s\r\nContent-Type: %s\r\nContent-Length: %s\r\nConnection: close\r\n\r\n" "$$status" "$$reason" "$$ctype" "$$len"
+        printf %s "$$body"
+        EOF
+        chmod +x /www/router.sh
+        # Conditional init: a restored volume already carries the value.
+        [ -f /data/counter ] || echo 0 > /data/counter
+        exec tcpsvd 0.0.0.0 80 /www/router.sh
+    expose:
+      - "80"
+    volumes:
+      - data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  data: {}

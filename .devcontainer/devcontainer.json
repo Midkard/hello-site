@@ -1,0 +1,25 @@
+{
+    "name": "hello-site",
+    "customizations": {
+        "sitemanager": {
+            "risk": {
+                "low": [
+                    "themes/*/assets/**",
+                    "assets/**"
+                ],
+                "medium": [
+                    "themes/*/pages/**",
+                    "pages/**",
+                    "package.json",
+                    "composer.json"
+                ],
+                "high": [
+                    "docker-compose.yml",
+                    "config/**",
+                    ".env*",
+                    ".github/**"
+                ]
+            }
+        }
+    }
+}
